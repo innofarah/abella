@@ -5,5 +5,10 @@
 (ocamllex
   (modules lexer))
 
-(ocamlyacc
-  (modules parser))
+; (ocamlyacc
+;   (modules parser))
+
+(menhir
+  (modules parser)
+  (infer true)
+  (flags --explain))
