@@ -139,8 +139,7 @@
 /* Higher */
 
 
-%start lpmod lpsig defs top_command command any_command sig_decl mod_clause search_witness depth_spec
-
+%start lpmod lpsig top_command command any_command sig_decl mod_clause search_witness depth_spec
 /* %start term metaterm */
 
 %type <Typing.uterm> term
