@@ -1,6 +1,6 @@
 /****************************************************************************/
 /* Copyright (C) 2007-2009 Gacek                                            */
-/* Copyright (C) 2013-2018 Inria (Institut National de Recherche            */
+/* Copyright (C) 2013-2022 Inria (Institut National de Recherche            */
 /*                         en Informatique et en Automatique)               */
 /*                                                                          */
 /* This file is part of Abella.                                             */
@@ -355,7 +355,7 @@ aty:
   | id
     { id_to_aty $1 }
   | aty pty
-    { 
+    {
       let open Term in
       match $1 with
       | Tycons _ -> atyapp $1 $2
