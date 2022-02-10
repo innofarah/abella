@@ -430,7 +430,7 @@ module Json = struct
     | `Assoc asc -> begin
         pp_print_string out "{ " ;
         pp_open_box out 0 ; begin
-          pp_print_list format_field out asc
+          pp_print_list format_field out (List.rev asc)
             ~pp_sep:(fun out () ->
                 pp_print_string out "," ;
                 pp_print_space out ())
@@ -454,24 +454,30 @@ module Json = struct
     let out = Format.formatter_of_out_channel oc in
     Format.fprintf out "%a@?" format x
 
-  let of_position (lft, rgt) =
-    let open Lexing in
-    if ( lft == Lexing.dummy_pos
-         || lft.pos_fname = ""
-         || lft.pos_fname <> rgt.pos_fname )
-    then `Null
-    else
-      `List [
-        `String lft.pos_fname ;
-        `List [
-          `Int lft.pos_cnum ;
-          `Int lft.pos_bol ;
-          `Int lft.pos_lnum ;
-        ] ;
-        `List [
-          `Int rgt.pos_cnum ;
-          `Int rgt.pos_bol ;
-          `Int rgt.pos_lnum ;
-        ] ;
-      ]
+  let extend json k v =
+    match !json with
+    | `Assoc kvs -> json := `Assoc ((k, v) :: kvs)
+    | _ -> bugf "Json.extend: not an association: %s" (to_string !json)
+
 end
+
+let json_of_position (lft, rgt) =
+  let open Lexing in
+  if ( lft == Lexing.dummy_pos
+       || lft.pos_fname = ""
+       || lft.pos_fname <> rgt.pos_fname )
+  then `Null
+  else
+    `List [
+      `String lft.pos_fname ;
+      `List [
+        `Int lft.pos_cnum ;
+        `Int lft.pos_bol ;
+        `Int lft.pos_lnum ;
+      ] ;
+      `List [
+        `Int rgt.pos_cnum ;
+        `Int rgt.pos_bol ;
+        `Int rgt.pos_lnum ;
+      ] ;
+    ]

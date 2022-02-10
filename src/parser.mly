@@ -401,7 +401,7 @@ command:
 
 clearable:
   | clr=boption(STAR); h=hyp; ins=maybe_inst
-    { if clr then Types.Keep(h, ins) else Types.Remove(h, ins) }
+    { if clr then Types.Remove(h, ins) else Types.Keep(h, ins) }
 
 %inline
 maybe_inst:
@@ -508,6 +508,7 @@ pure_command:
   | PERMUTE; p=perm; h=option(hyp); DOT
     { Types.Permute(p, h) }
 
+%inline
 hhint:
   | x=STRINGID; COLON
     { check_legal_var x $startpos(x) ; Some x }
@@ -720,4 +721,4 @@ depth_spec_one:
 
 %inline
 located(X):
-  | x=X { (x, $sloc) }
+  | x=X { (x, $loc) }

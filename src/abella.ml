@@ -70,10 +70,15 @@ module Annot : sig
   val enter : string -> unit
   val leave : unit -> unit
   val add_field : string -> Json.t -> unit
+  val fresh : unit -> Json.t
+  val one_shot : Json.t -> unit
 end = struct
   let cur_annot : (string * Json.t) list option ref = ref None
   let count = ref 0
   let is_first = ref true
+  let fresh () =
+    incr count ;
+    `Assoc [ "count", `Int !count ]
   let enter reason =
     match !cur_annot with
     | Some _ -> bugf "annotation: enter called in scope of another enter"
@@ -83,16 +88,18 @@ end = struct
             "type", `String reason ;
             "count", `Int !count ;
           ]
+  let one_shot annot =
+    if !annotate then begin
+      if not !is_first then fprintf !out ",\n" ;
+      is_first := false ;
+      fprintf !out "%s%!" (Json.to_string annot) ;
+    end
   let leave () =
     match !cur_annot with
     | Some flds ->
         cur_annot := None ;
-        let annot = `Assoc (List.rev flds) in
-        if !annotate then begin
-          if not !is_first then fprintf !out ",\n" ;
-          is_first := false ;
-          fprintf !out "%s%!" (Json.to_string annot) ;
-        end
+        let annot = `Assoc flds in
+        one_shot annot
     | None ->
         bugf "annotation: leave called before enter"
   let add_field key value =
@@ -100,6 +107,7 @@ end = struct
     | None ->
         bugf "annotation: add_field called outside scope of enter"
     | Some flds -> cur_annot := Some ((key, value) :: flds)
+
 end
 
 type severity = Info | Error
@@ -650,93 +658,101 @@ let rec process1 () =
       interactive_or_exit ()
 
 and process_proof1 name =
+  let json = ref @@ Annot.fresh () in
+  Json.extend json "type" @@ `String "proof_command" ;
   if not !suppress_proof_state_display then begin
     if !annotate then begin
-      Annot.enter "proof_state" ;
-      Annot.add_field "theorem" @@ `String name ;
-      Annot.add_field "contents" @@ Prover.state_json () ;
-      Annot.leave ()
+      Json.extend json "theorem" @@ `String name ;
+      Json.extend json "start_state" @@ Prover.state_json () ;
     end
     else if !interactive then Prover.display !out
   end ;
   suppress_proof_state_display := false ;
   if !interactive && not !annotate then fprintf !out "%s < %!" name ;
   let input, input_pos = Parser.command_start Lexer.token !lexbuf in
-  Annot.enter "proof_command" ;
-  Annot.add_field "theorem" @@ `String name ;
-  if fst input_pos != Lexing.dummy_pos then
-    Annot.add_field "provenance" @@ Json.of_position input_pos ;
   let cmd_string = command_to_string input in
   if not (!interactive || !annotate) then fprintf !out "%s.\n%!" cmd_string ;
-  Annot.add_field "command" @@ `String cmd_string ;
-  Annot.leave () ;
-  begin match input with
-  | Induction(args, hn)           -> Prover.induction ?name:hn args
-  | CoInduction hn                -> Prover.coinduction ?name:hn ()
-  | Apply(depth, h, args, ws, hn) -> Prover.apply ?depth ?name:hn h args ws ~term_witness
-  | Backchain(depth, h, ws)       -> Prover.backchain ?depth h ws ~term_witness
-  | Cut(h, arg, hn)               -> Prover.cut ?name:hn h arg
-  | CutFrom(h, arg, t, hn)        -> Prover.cut_from ?name:hn h arg t
-  | SearchCut(h, hn)              -> Prover.search_cut ?name:hn h
-  | Inst(h, ws, hn)               -> Prover.inst ?name:hn h ws
-  | Case(str, hn)                 -> Prover.case ?name:hn str
-  | Assert(t, dp, hn)             ->
-      untyped_ensure_no_restrictions t ;
-      Prover.assert_hyp ?name:hn ?depth:dp t
-  | Monotone(h, t, hn)            -> Prover.monotone ?name:hn h t
-  | Exists(_, ts)                 -> List.iter Prover.exists ts
-  | Clear(cm, hs)                 -> Prover.clear cm hs
-  | Abbrev(hs, s)                 -> Prover.abbrev (Iset.of_list hs) s
-  | Unabbrev(hs)                  -> Prover.unabbrev (Iset.of_list hs)
-  | Rename(hfr, hto)              -> Prover.rename hfr hto
-  | Search(bounds) -> begin
-      let depth = match bounds with
-        | `depth n -> Some n
-        | _ -> None
-      in
-      let witness = match bounds with
-        | `witness w -> w
-        | _ -> WMagic
-      in
-      Prover.search ?depth ~witness ~handle_witness:handle_search_witness ()
+  if !annotate then Json.extend json "command" @@ `String cmd_string ;
+  if !annotate && fst input_pos != Lexing.dummy_pos then
+    Json.extend json "provenance" @@ json_of_position input_pos ;
+  let perform () =
+    begin match input with
+    | Induction(args, hn)           -> Prover.induction ?name:hn args
+    | CoInduction hn                -> Prover.coinduction ?name:hn ()
+    | Apply(depth, h, args, ws, hn) -> Prover.apply ?depth ?name:hn h args ws ~term_witness
+    | Backchain(depth, h, ws)       -> Prover.backchain ?depth h ws ~term_witness
+    | Cut(h, arg, hn)               -> Prover.cut ?name:hn h arg
+    | CutFrom(h, arg, t, hn)        -> Prover.cut_from ?name:hn h arg t
+    | SearchCut(h, hn)              -> Prover.search_cut ?name:hn h
+    | Inst(h, ws, hn)               -> Prover.inst ?name:hn h ws
+    | Case(str, hn)                 -> Prover.case ?name:hn str
+    | Assert(t, dp, hn)             ->
+        untyped_ensure_no_restrictions t ;
+        Prover.assert_hyp ?name:hn ?depth:dp t
+    | Monotone(h, t, hn)            -> Prover.monotone ?name:hn h t
+    | Exists(_, ts)                 -> List.iter Prover.exists ts
+    | Clear(cm, hs)                 -> Prover.clear cm hs
+    | Abbrev(hs, s)                 -> Prover.abbrev (Iset.of_list hs) s
+    | Unabbrev(hs)                  -> Prover.unabbrev (Iset.of_list hs)
+    | Rename(hfr, hto)              -> Prover.rename hfr hto
+    | Search(bounds) -> begin
+        let depth = match bounds with
+          | `depth n -> Some n
+          | _ -> None
+        in
+        let witness = match bounds with
+          | `witness w -> w
+          | _ -> WMagic
+        in
+        Prover.search ?depth ~witness ~handle_witness:handle_search_witness ()
+      end
+    | Async_steps            -> Prover.async ()
+    | Permute(ids, h)        -> Prover.permute_nominals ids h
+    | Split                  -> Prover.split false
+    | SplitStar              -> Prover.split true
+    | Left                   -> Prover.left ()
+    | Right                  -> Prover.right ()
+    | Unfold (cs, ss)        -> Prover.unfold cs ss
+    | Intros hs              -> Prover.intros hs
+    | Skip                   -> Prover.skip ()
+    | Abort                  -> raise (Prover.End_proof `aborted)
+    | Undo
+    | Common(Back)           ->
+        if !interactive then State.Undo.back 2
+        else failwith "Cannot use interactive commands in non-interactive mode"
+    | Common(Reset)          ->
+        if !interactive then State.Undo.reset ()
+        else failwith "Cannot use interactive commands in non-interactive mode"
+    | Common(Set(k, v))      -> set k v
+    | Common(Show nm)        ->
+        Prover.show nm ;
+        if !interactive then fprintf !out "\n%!" ;
+        suppress_proof_state_display := true
+    | Common(Quit)           -> raise End_of_file
     end
-  | Async_steps            -> Prover.async ()
-  | Permute(ids, h)        -> Prover.permute_nominals ids h
-  | Split                  -> Prover.split false
-  | SplitStar              -> Prover.split true
-  | Left                   -> Prover.left ()
-  | Right                  -> Prover.right ()
-  | Unfold (cs, ss)        -> Prover.unfold cs ss
-  | Intros hs              -> Prover.intros hs
-  | Skip                   -> Prover.skip ()
-  | Abort                  -> raise (Prover.End_proof `aborted)
-  | Undo
-  | Common(Back)           ->
-      if !interactive then State.Undo.back 2
-      else failwith "Cannot use interactive commands in non-interactive mode"
-  | Common(Reset)          ->
-      if !interactive then State.Undo.reset ()
-      else failwith "Cannot use interactive commands in non-interactive mode"
-  | Common(Set(k, v))      -> set k v
-  | Common(Show nm)        ->
-      Prover.show nm ;
-      if !interactive then fprintf !out "\n%!" ;
-      suppress_proof_state_display := true
-  | Common(Quit)           -> raise End_of_file
-  end
+  in
+  if not !annotate then perform () else
+  match perform () with
+  | () ->
+      Json.extend json "end_state" @@ Prover.state_json () ;
+      Annot.one_shot !json
+  | exception e ->
+      Annot.one_shot !json ;
+      raise e
 
 and process_top1 () =
   if !interactive && not !annotate then fprintf !out "Abella < %!" ;
+  let json = ref @@ Annot.fresh () in
   let input, input_pos = Parser.top_command_start Lexer.token !lexbuf in
-  Annot.enter "top_command" ;
+  Json.extend json "type" @@ `String "top_command" ;
   if fst input_pos != Lexing.dummy_pos then
-    Annot.add_field "provenance" @@ Json.of_position input_pos ;
+    Json.extend json "provenance" @@ json_of_position input_pos ;
   let cmd_string = top_command_to_string input in
   if not (!interactive || !annotate) then fprintf !out "%s.\n%!" cmd_string ;
-  Annot.add_field "command" @@ `String cmd_string ;
-  Annot.leave () ;
+  Json.extend json "command" @@ `String cmd_string ;
+  Annot.one_shot !json ;
   begin match input with
-  | Theorem(name, tys, thm) ->
+  | Theorem(name, tys, thm) -> begin
       let st = get_bind_state () in
       let seq = Prover.copy_sequent () in
       let thm = type_umetaterm ~sr:!sr ~sign:!sign thm in
@@ -756,7 +772,8 @@ and process_top1 () =
           thm = name ;
           compile = thm_compile ;
           reset = thm_reset
-        } ;
+        }
+    end
   | SSplit(name, names) ->
       let gen_thms = Prover.create_split_theorems name names in
       List.iter begin fun (n, (tys, t)) ->

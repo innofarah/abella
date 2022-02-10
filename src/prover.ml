@@ -495,9 +495,11 @@ let state_json () : Json.t =
     end sequent.hyps in
   let goal = metaterm_to_string sequent.goal in
   `Assoc [
-    "vars", `List vars ;
-    "hyps", `List hyps ;
+    "more", `Int (List.length !subgoals) ;
     "goal", `String goal ;
+    "hyps", `List hyps ;
+    "vars", `List vars ;
+    "name", `String sequent.name ;
   ]
 
 (* Proof state manipulation utilities *)
