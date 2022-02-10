@@ -207,8 +207,8 @@ let register_definition = function
 
 let parse_definition str =
   Lexing.from_string str |>
-  Parser.top_command Lexer.token |>
-  register_definition
+  Parser.top_command_start Lexer.token |>
+  fst |> register_definition
 
 let k_member = "member"
 let member_def_compiled =

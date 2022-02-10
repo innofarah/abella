@@ -133,7 +133,7 @@ let sanitize_filename fn =
 
 let read_specification name =
   clear_specification_cache () ;
-  fprintf !out "Reading specification %S.\n%!" (sanitize_filename name) ;
+  if !interactive then fprintf !out "Reading specification %S.\n%!" (sanitize_filename name) ;
   let read_sign = get_sign name in
   let () = warn_on_teyjus_only_keywords read_sign in
   let sign' = merge_signs [!sign; read_sign] in
@@ -525,20 +525,56 @@ let current_state = State.rref Process_top
 let print_clauses () =
   List.iter print_clause !Prover.clauses
 
+module Annot : sig
+  val enter : string -> unit
+  val leave : unit -> unit
+  val add_field : string -> Json.t -> unit
+  val checkpoint : unit -> Json.t
+end = struct
+  let all_annots : Json.t list ref = ref []
+  let cur_annot : (string * Json.t) list option ref = ref None
+  let count = ref 0
+  let enter reason =
+    match !cur_annot with
+    | Some _ -> bugf "annotation: enter called in scope of another enter"
+    | None ->
+      incr count ;
+      cur_annot := Some [
+          "type", `String reason ;
+          "count", `Int !count ;
+        ]
+  let leave () =
+    match !cur_annot with
+    | Some flds ->
+      cur_annot := None ;
+      all_annots := `Assoc (List.rev flds) :: !all_annots
+    | None ->
+      bugf "annotation: leave called before enter"
+  let add_field key value =
+    match !cur_annot with
+    | None ->
+      bugf "annotation: add_field called outside scope of enter"
+    | Some flds -> cur_annot := Some ((key, value) :: flds)
+  let checkpoint () =
+    match !cur_annot with
+    | None -> `List (List.rev !all_annots)
+    | Some _ ->
+      bugf "annotation: checkpoint called in scope of enter"
+end
+
 let rec process1 () =
   State.Undo.push () ;
   try begin match !current_state with
-    | Process_top ->
-        process_top1 ()
+    | Process_top -> process_top1 ()
     | Process_proof proc -> begin
         try process_proof1 proc.thm with
         | Prover.End_proof reason -> begin
-            fprintf !out "Proof %s.\n%!" begin
-              match reason with
+            begin match reason with
               | `completed ->
-                  proc.compile () ;
-                  "completed"
-              | `aborted -> "ABORTED"
+                proc.compile () ;
+                if !interactive then fprintf !out "Proof completed.\n%!"
+              | `aborted ->
+                if !interactive then fprintf !out "Proof ABORTED.\n%!"
             end ;
             proc.reset () ;
             (* print_clauses () ; *)
@@ -561,18 +597,17 @@ let rec process1 () =
       interactive_or_exit ()
   | End_of_file ->
       write_compilation () ;
+      if !annotate then begin
+        Json.to_channel !out @@ Annot.checkpoint ()
+      end ;
       if !switch_to_interactive then begin
-        if !annotate then fprintf !out "\n</pre>\n" ;
         perform_switch_to_interactive ()
       end else begin
         match !current_state with
-        | Process_top ->
-            if !annotate then fprintf !out "\n</pre>\n%!" ;
-            exit 0
+        | Process_top -> exit 0
         | _ ->
-            fprintf !out "Proof NOT completed.\n%!" ;
-            if !annotate then fprintf !out "</pre>\n%!" ;
-            exit 1
+          if !interactive then fprintf !out "Proof NOT completed.\n%!" ;
+          exit 1
       end
   | e ->
       State.Undo.undo () ;
@@ -593,15 +628,21 @@ let rec process1 () =
 
 and process_proof1 name =
   if not !suppress_proof_state_display then begin
-    Prover.display !out ;
+    if !interactive then Prover.display !out else begin
+      Annot.enter "proof_state" ;
+      Annot.add_field "contents" @@ `String (Prover.get_display ()) ;
+      Annot.leave ()
+    end
   end ;
   suppress_proof_state_display := false ;
-  fprintf !out "%s < %!" name ;
-  let input = Parser.command Lexer.token !lexbuf in
-  if not !interactive then begin
-    let pre, post = if !annotate then "<b>", "</b>" else "", "" in
-    fprintf !out "%s%s.%s\n%!" pre (command_to_string input) post
-  end ;
+  if !interactive then fprintf !out "%s < %!" name ;
+  let input, input_pos = Parser.command_start Lexer.token !lexbuf in
+  Annot.enter "proof_command" ;
+  Annot.add_field "provenance" @@ Json.of_position input_pos ;
+  let cmd_string = command_to_string input in
+  if not (!interactive || !annotate) then fprintf !out "%s.\n%!" cmd_string ;
+  Annot.add_field "command" @@ `String cmd_string ;
+  Annot.leave () ;
   begin match input with
   | Induction(args, hn)           -> Prover.induction ?name:hn args
   | CoInduction hn                -> Prover.coinduction ?name:hn ()
@@ -652,18 +693,20 @@ and process_proof1 name =
   | Common(Set(k, v))      -> set k v
   | Common(Show nm)        ->
       Prover.show nm ;
-      fprintf !out "\n%!" ;
+      if !interactive then fprintf !out "\n%!" ;
       suppress_proof_state_display := true
   | Common(Quit)           -> raise End_of_file
   end
 
 and process_top1 () =
-  fprintf !out "Abella < %!" ;
-  let input = Parser.top_command Lexer.token !lexbuf in
-  if not !interactive then begin
-    let pre, post = if !annotate then "<b>", "</b>" else "", "" in
-    fprintf !out "%s%s.%s\n%!" pre (top_command_to_string input) post
-  end ;
+  if !interactive then fprintf !out "Abella < %!" ;
+  let input, input_pos = Parser.top_command_start Lexer.token !lexbuf in
+  Annot.enter "top_command" ;
+  Annot.add_field "provenance" @@ Json.of_position input_pos ;
+  let cmd_string = top_command_to_string input in
+  if not (!interactive || !annotate) then fprintf !out "%s.\n%!" cmd_string ;
+  Annot.add_field "command" @@ `String cmd_string ;
+  Annot.leave () ;
   begin match input with
   | Theorem(name, tys, thm) ->
       let st = get_bind_state () in
@@ -810,14 +853,14 @@ let set_input () =
 let add_input filename =
   input_files := !input_files @ [filename]
 
-let number fn () =
-  if !annotate then begin
-    incr count ;
-    fprintf !out "<a name=\"%d\"></a>\n%!" !count ;
-    fprintf !out "<pre class=\"code\">\n%!" ;
-  end ;
-  fn () ;
-  if !annotate then fprintf !out "</pre>\n%!"
+(* let number fn () = *)
+(*   if !annotate then begin *)
+(*     incr count ; *)
+(*     fprintf !out "<a name=\"%d\"></a>\n%!" !count ; *)
+(*     fprintf !out "<pre class=\"code\">\n%!" ; *)
+(*   end ; *)
+(*   fn () ; *)
+(*   if !annotate then fprintf !out "</pre>\n%!" *)
 
 let _ =
   Sys.set_signal Sys.sigint
@@ -830,8 +873,8 @@ let _ =
       List.iter Depend.print_deps !input_files ;
     end else begin
       set_input () ;
-      fprintf !out "%s%!" welcome_msg ;
+      if !interactive then fprintf !out "%s%!" welcome_msg ;
       State.Undo.set_enabled (!interactive || !switch_to_interactive) ;
-      while true do number process1 () done
+      while true do process1 () done
     end
 ;;
