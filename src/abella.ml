@@ -42,7 +42,7 @@ let interactive = ref true
 let compile_out = ref None
 
 let switch_to_interactive = ref false
-let lexbuf = ref (Lexing.from_channel stdin)
+let lexbuf = ref (Lexing.from_channel ~with_positions:false stdin)
 
 let annotate = ref false
 
@@ -64,15 +64,73 @@ let eprintf fmt =
       output_flush stderr s
   end fmt
 
+(* Annotations *)
+
+module Annot : sig
+  val enter : string -> unit
+  val leave : unit -> unit
+  val add_field : string -> Json.t -> unit
+end = struct
+  let cur_annot : (string * Json.t) list option ref = ref None
+  let count = ref 0
+  let is_first = ref true
+  let enter reason =
+    match !cur_annot with
+    | Some _ -> bugf "annotation: enter called in scope of another enter"
+    | None ->
+        incr count ;
+        cur_annot := Some [
+            "type", `String reason ;
+            "count", `Int !count ;
+          ]
+  let leave () =
+    match !cur_annot with
+    | Some flds ->
+        cur_annot := None ;
+        let annot = `Assoc (List.rev flds) in
+        if !annotate then begin
+          if not !is_first then fprintf !out ",\n" ;
+          is_first := false ;
+          fprintf !out "%s%!" (Json.to_string annot) ;
+        end
+    | None ->
+        bugf "annotation: leave called before enter"
+  let add_field key value =
+    match !cur_annot with
+    | None ->
+        bugf "annotation: add_field called outside scope of enter"
+    | Some flds -> cur_annot := Some ((key, value) :: flds)
+end
+
+type severity = Info | Error
+
+let system_message ?(severity=Info) fmt =
+  Printf.ksprintf begin fun msg ->
+    if !annotate then begin
+      Annot.enter "system_message" ;
+      Annot.add_field "severity" @@ `String (
+        match severity with
+        | Info -> "info"
+        | Error -> "error"
+      ) ;
+      Annot.add_field "message" @@ `String msg ;
+      Annot.leave ()
+    end else begin
+      match severity with
+      | Info -> fprintf !out "%s\n%!" msg
+      | Error -> eprintf "%s\n%!" msg
+    end
+  end fmt
+
 (* Input *)
 
 let perform_switch_to_interactive () =
   assert !switch_to_interactive ;
   switch_to_interactive := false ;
-  lexbuf := Lexing.from_channel stdin ;
+  lexbuf := Lexing.from_channel ~with_positions:false stdin ;
   interactive := true ;
   out := stdout ;
-  fprintf !out "Switching to interactive mode.\n%!" ;
+  system_message "Switching to interactive mode." ;
   State.Undo.undo ()
 
 let interactive_or_exit () =
@@ -93,13 +151,15 @@ let position_range (p1, p2) =
     sprintf ": file %s, line %d, characters %d-%d" file line char1 char2
 
 let type_inference_error (pos, ct) exp act =
-  fprintf !out "Typing error%s.\n%!" (position_range pos) ;
+  system_message "Typing error%s." (position_range pos) ;
   match ct with
   | CArg ->
-      eprintf "Expression has type %s but is used here with type %s.\n%!"
+      system_message ~severity:Error
+        "Expression has type %s but is used here with type %s.\n%!"
         (ty_to_string act) (ty_to_string exp)
   | CFun ->
-      eprintf "Expression is applied to too many arguments\n%!"
+      system_message ~severity:Error
+        "Expression is applied to too many arguments\n%!"
 
 let teyjus_only_keywords =
   ["closed"; "exportdef"; "import"; "infix"; "infixl"; "infixr"; "local";
@@ -110,8 +170,7 @@ let warn_on_teyjus_only_keywords (ktable, ctable) =
   let tokens = List.unique (List.map fst ktable @ List.map fst ctable) in
   let used_keywords = List.intersect tokens teyjus_only_keywords in
   if used_keywords <> [] then
-    fprintf !out
-      "Warning: The following tokens are keywords in Teyjus: %s.\n%!"
+    system_message "Warning: The following tokens are keywords in Teyjus: %s."
       (String.concat ", " used_keywords)
 
 let update_subordination_sign sr sign =
@@ -133,7 +192,8 @@ let sanitize_filename fn =
 
 let read_specification name =
   clear_specification_cache () ;
-  if !interactive then fprintf !out "Reading specification %S.\n%!" (sanitize_filename name) ;
+  if !interactive then
+    system_message "Reading specification %S." (sanitize_filename name) ;
   let read_sign = get_sign name in
   let () = warn_on_teyjus_only_keywords read_sign in
   let sign' = merge_signs [!sign; read_sign] in
@@ -263,7 +323,7 @@ let maybe_make_importable ?(force=false) root =
         (sanitize_filename thm)
         (sanitize_filename root)
         (sanitize_filename thc) in
-    Printf.eprintf "Running: %s.\n%!" sanitized_cmd ;
+    system_message "Running: %s.\n%!" sanitized_cmd ;
     if Sys.command cmd <> 0 then
       failwithf "Could not create %S" thc
 
@@ -412,9 +472,9 @@ let import filename withs =
     end
   in
   if List.mem filename !imported then
-    fprintf !out "Ignoring import: %s has already been imported.\n%!" filename
+    system_message "Ignoring import: %s has already been imported." filename
   else begin
-    fprintf !out "Importing from %S.\n%!" (sanitize_filename filename) ;
+    system_message "Importing from %S." (sanitize_filename filename) ;
     aux filename withs
   end
 
@@ -437,14 +497,14 @@ let query q =
           ~retype:Prover.retype
           ~sr:!sr
           ~sc:(fun _w ->
-              fprintf !out "Found solution:\n" ;
+              system_message "Found solution:" ;
               List.iter
                 (fun (n, v) ->
-                   fprintf !out "%s = %s\n" n (term_to_string v))
+                   system_message "%s = %s" n (term_to_string v))
                 ctx ;
-              fprintf !out "\n%!")
+              if !interactive then fprintf !out "\n%!")
       in
-      fprintf !out "No more solutions.\n%!"
+      system_message "No more solutions."
   | _ -> assert false
 
 let set_fail ~key ~expected v =
@@ -502,11 +562,11 @@ let set k v =
 
 let handle_search_witness w =
   if !witnesses then
-    fprintf !out "Witness: %s.\n%!" (witness_to_string w)
+    system_message "Witness: %s." (witness_to_string w)
 
 let term_witness (_t, w) =
   if !witnesses then
-    fprintf !out "Witness: %s.\n%!" (witness_to_string w)
+    system_message "Witness: %s." (witness_to_string w)
 
 let suppress_proof_state_display = State.rref false
 
@@ -525,43 +585,6 @@ let current_state = State.rref Process_top
 let print_clauses () =
   List.iter print_clause !Prover.clauses
 
-module Annot : sig
-  val enter : string -> unit
-  val leave : unit -> unit
-  val add_field : string -> Json.t -> unit
-  val checkpoint : unit -> Json.t
-end = struct
-  let all_annots : Json.t list ref = ref []
-  let cur_annot : (string * Json.t) list option ref = ref None
-  let count = ref 0
-  let enter reason =
-    match !cur_annot with
-    | Some _ -> bugf "annotation: enter called in scope of another enter"
-    | None ->
-      incr count ;
-      cur_annot := Some [
-          "type", `String reason ;
-          "count", `Int !count ;
-        ]
-  let leave () =
-    match !cur_annot with
-    | Some flds ->
-      cur_annot := None ;
-      all_annots := `Assoc (List.rev flds) :: !all_annots
-    | None ->
-      bugf "annotation: leave called before enter"
-  let add_field key value =
-    match !cur_annot with
-    | None ->
-      bugf "annotation: add_field called outside scope of enter"
-    | Some flds -> cur_annot := Some ((key, value) :: flds)
-  let checkpoint () =
-    match !cur_annot with
-    | None -> `List (List.rev !all_annots)
-    | Some _ ->
-      bugf "annotation: checkpoint called in scope of enter"
-end
-
 let rec process1 () =
   State.Undo.push () ;
   try begin match !current_state with
@@ -569,12 +592,11 @@ let rec process1 () =
     | Process_proof proc -> begin
         try process_proof1 proc.thm with
         | Prover.End_proof reason -> begin
-            begin match reason with
-              | `completed ->
-                proc.compile () ;
-                if !interactive then fprintf !out "Proof completed.\n%!"
-              | `aborted ->
-                if !interactive then fprintf !out "Proof ABORTED.\n%!"
+            if reason = `completed then proc.compile () ;
+            system_message "Proof %s" begin
+              match reason with
+              | `completed -> "completed"
+              | `aborted -> "ABORTED"
             end ;
             proc.reset () ;
             (* print_clauses () ; *)
@@ -586,9 +608,10 @@ let rec process1 () =
       State.Undo.undo () ;
       Lexing.flush_input !lexbuf ;
       interactive_or_exit ()
-  | Parsing.Parse_error ->
+  | Parser.Error ->
       State.Undo.undo () ;
-      eprintf "Syntax error%s.\n%!" (position !lexbuf) ;
+      system_message ~severity:Error
+        "Syntax error%s.\n%!" (position !lexbuf) ;
       Lexing.flush_input !lexbuf ;
       interactive_or_exit ()
   | TypeInferenceFailure(exp, act, ci) ->
@@ -597,17 +620,17 @@ let rec process1 () =
       interactive_or_exit ()
   | End_of_file ->
       write_compilation () ;
-      if !annotate then begin
-        Json.to_channel !out @@ Annot.checkpoint ()
-      end ;
       if !switch_to_interactive then begin
         perform_switch_to_interactive ()
       end else begin
         match !current_state with
-        | Process_top -> exit 0
+        | Process_top ->
+            if !annotate then fprintf !out "]\n%!" ;
+            exit 0
         | _ ->
-          if !interactive then fprintf !out "Proof NOT completed.\n%!" ;
-          exit 1
+            system_message ~severity:Error "Proof NOT Completed." ;
+            if !annotate then fprintf !out "]\n%!" ;
+            exit 1
       end
   | e ->
       State.Undo.undo () ;
@@ -623,24 +646,26 @@ let rec process1 () =
                                    \ To help improve Abella's error messages, please file a bug report at\n\
                                    \ <https://github.com/abella-prover/abella/issues>. Thanks!"
       in
-      eprintf "Error: %s\n%!" msg ;
+      system_message ~severity:Error "Error: %s\n%!" msg ;
       interactive_or_exit ()
 
 and process_proof1 name =
   if not !suppress_proof_state_display then begin
-    if !interactive then Prover.display !out else begin
+    if !annotate then begin
       Annot.enter "proof_state" ;
       Annot.add_field "theorem" @@ `String name ;
       Annot.add_field "contents" @@ Prover.state_json () ;
       Annot.leave ()
     end
+    else if !interactive then Prover.display !out
   end ;
   suppress_proof_state_display := false ;
-  if !interactive then fprintf !out "%s < %!" name ;
+  if !interactive && not !annotate then fprintf !out "%s < %!" name ;
   let input, input_pos = Parser.command_start Lexer.token !lexbuf in
   Annot.enter "proof_command" ;
   Annot.add_field "theorem" @@ `String name ;
-  Annot.add_field "provenance" @@ Json.of_position input_pos ;
+  if fst input_pos != Lexing.dummy_pos then
+    Annot.add_field "provenance" @@ Json.of_position input_pos ;
   let cmd_string = command_to_string input in
   if not (!interactive || !annotate) then fprintf !out "%s.\n%!" cmd_string ;
   Annot.add_field "command" @@ `String cmd_string ;
@@ -701,10 +726,11 @@ and process_proof1 name =
   end
 
 and process_top1 () =
-  if !interactive then fprintf !out "Abella < %!" ;
+  if !interactive && not !annotate then fprintf !out "Abella < %!" ;
   let input, input_pos = Parser.top_command_start Lexer.token !lexbuf in
   Annot.enter "top_command" ;
-  Annot.add_field "provenance" @@ Json.of_position input_pos ;
+  if fst input_pos != Lexing.dummy_pos then
+    Annot.add_field "provenance" @@ Json.of_position input_pos ;
   let cmd_string = top_command_to_string input in
   if not (!interactive || !annotate) then fprintf !out "%s.\n%!" cmd_string ;
   Annot.add_field "command" @@ `String cmd_string ;
@@ -773,7 +799,7 @@ and process_top1 () =
       compile (CClose(List.map (fun aty -> (aty, Subordination.subordinates !sr aty)) atys))
   end ;
   if !interactive then flush stdout ;
-  fprintf !out "\n%!"
+  if not !annotate then fprintf !out "\n%!"
 
 (* Command line and startup *)
 
@@ -842,27 +868,19 @@ let input_files = ref []
 
 let set_input () =
   match !input_files with
-    | [] -> ()
-    | [filename] ->
-        interactive := false ;
-        lexbuf := lexbuf_from_file filename ;
-        load_path := normalize_filename ~wrt:(Sys.getcwd ()) (Filename.dirname filename)
-    | fs ->
-        eprintf "Error: Multiple files specified as input: %s.\n%!"
-          (String.concat ", " fs) ;
-        exit 1
+  | [] -> ()
+  | [filename] ->
+      interactive := false ;
+      lexbuf := lexbuf_from_file filename ;
+      load_path := normalize_filename ~wrt:(Sys.getcwd ()) (Filename.dirname filename)
+  | fs ->
+      system_message ~severity:Error
+        "Error: Multiple files specified as input: %s.\n%!"
+        (String.concat ", " fs) ;
+      exit 1
 
 let add_input filename =
   input_files := !input_files @ [filename]
-
-(* let number fn () = *)
-(*   if !annotate then begin *)
-(*     incr count ; *)
-(*     fprintf !out "<a name=\"%d\"></a>\n%!" !count ; *)
-(*     fprintf !out "<pre class=\"code\">\n%!" ; *)
-(*   end ; *)
-(*   fn () ; *)
-(*   if !annotate then fprintf !out "</pre>\n%!" *)
 
 let _ =
   Sys.set_signal Sys.sigint
@@ -875,7 +893,8 @@ let _ =
       List.iter Depend.print_deps !input_files ;
     end else begin
       set_input () ;
-      if !interactive then fprintf !out "%s%!" welcome_msg ;
+      if !annotate then fprintf !out "[%!" ;
+      if !interactive then system_message "%s" welcome_msg ;
       State.Undo.set_enabled (!interactive || !switch_to_interactive) ;
       while true do process1 () done
     end
