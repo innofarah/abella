@@ -475,6 +475,8 @@ module Json = struct
 
   and sanitize s = "\"" ^ String.escaped s ^ "\""
 
+  let string s : t = `String s
+
   let to_string x = Format.asprintf "%a" format x
 
   let to_channel oc x =

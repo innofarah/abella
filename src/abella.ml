@@ -630,7 +630,8 @@ and process_proof1 name =
   if not !suppress_proof_state_display then begin
     if !interactive then Prover.display !out else begin
       Annot.enter "proof_state" ;
-      Annot.add_field "contents" @@ `String (Prover.get_display ()) ;
+      Annot.add_field "theorem" @@ `String name ;
+      Annot.add_field "contents" @@ Prover.state_json () ;
       Annot.leave ()
     end
   end ;
@@ -638,6 +639,7 @@ and process_proof1 name =
   if !interactive then fprintf !out "%s < %!" name ;
   let input, input_pos = Parser.command_start Lexer.token !lexbuf in
   Annot.enter "proof_command" ;
+  Annot.add_field "theorem" @@ `String name ;
   Annot.add_field "provenance" @@ Json.of_position input_pos ;
   let cmd_string = command_to_string input in
   if not (!interactive || !annotate) then fprintf !out "%s.\n%!" cmd_string ;

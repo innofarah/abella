@@ -483,6 +483,22 @@ let get_display () =
   format_display (formatter_of_buffer b) ;
   Buffer.contents b
 
+let state_json () : Json.t =
+  let vars =
+    List.filter is_uninstantiated sequent.vars
+    |> List.map fst |> List.map Json.string in
+  let hyps = List.map begin fun h ->
+      `List [
+        `String h.id ;
+        `String (metaterm_to_string h.term) ;
+      ]
+    end sequent.hyps in
+  let goal = metaterm_to_string sequent.goal in
+  `Assoc [
+    "vars", `List vars ;
+    "hyps", `List hyps ;
+    "goal", `String goal ;
+  ]
 
 (* Proof state manipulation utilities *)
 
