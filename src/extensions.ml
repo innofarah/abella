@@ -460,24 +460,3 @@ module Json = struct
     | _ -> bugf "Json.extend: not an association: %s" (to_string !json)
 
 end
-
-let json_of_position (lft, rgt) =
-  let open Lexing in
-  if ( lft == Lexing.dummy_pos
-       || lft.pos_fname = ""
-       || lft.pos_fname <> rgt.pos_fname )
-  then `Null
-  else
-    `List [
-      `String lft.pos_fname ;
-      `List [
-        `Int lft.pos_cnum ;
-        `Int lft.pos_bol ;
-        `Int lft.pos_lnum ;
-      ] ;
-      `List [
-        `Int rgt.pos_cnum ;
-        `Int rgt.pos_bol ;
-        `Int rgt.pos_lnum ;
-      ] ;
-    ]

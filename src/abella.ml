@@ -46,8 +46,6 @@ let lexbuf = ref (Lexing.from_channel ~with_positions:false stdin)
 
 let annotate = ref false
 
-let count = ref 0
-
 let witnesses = State.rref false
 
 exception AbortProof
@@ -66,48 +64,38 @@ let eprintf fmt =
 
 (* Annotations *)
 
+let json_of_position (lft, rgt) =
+  let open Lexing in
+  if ( lft = Lexing.dummy_pos
+       || lft.pos_fname = ""
+       || lft.pos_fname <> rgt.pos_fname )
+  then `Null else
+    `List [
+      `Int lft.pos_cnum ;
+      `Int lft.pos_bol ;
+      `Int lft.pos_lnum ;
+      `Int rgt.pos_cnum ;
+      `Int rgt.pos_bol ;
+      `Int rgt.pos_lnum ;
+    ]
+
 module Annot : sig
-  val enter : string -> unit
-  val leave : unit -> unit
-  val add_field : string -> Json.t -> unit
-  val fresh : unit -> Json.t
-  val one_shot : Json.t -> unit
+  val fresh : unit -> Json.t ref * int
+  val commit : Json.t ref -> unit
 end = struct
-  let cur_annot : (string * Json.t) list option ref = ref None
-  let count = ref 0
+  let last_id = ref 0
   let is_first = ref true
   let fresh () =
-    incr count ;
-    `Assoc [ "count", `Int !count ]
-  let enter reason =
-    match !cur_annot with
-    | Some _ -> bugf "annotation: enter called in scope of another enter"
-    | None ->
-        incr count ;
-        cur_annot := Some [
-            "type", `String reason ;
-            "count", `Int !count ;
-          ]
-  let one_shot annot =
+    let id = !last_id in
+    let json = ref @@ `Assoc [ "id", `Int id ] in
+    incr last_id ;
+    (json, id)
+  let commit json =
     if !annotate then begin
       if not !is_first then fprintf !out ",\n" ;
       is_first := false ;
-      fprintf !out "%s%!" (Json.to_string annot) ;
+      fprintf !out "%s%!" (Json.to_string !json) ;
     end
-  let leave () =
-    match !cur_annot with
-    | Some flds ->
-        cur_annot := None ;
-        let annot = `Assoc flds in
-        one_shot annot
-    | None ->
-        bugf "annotation: leave called before enter"
-  let add_field key value =
-    match !cur_annot with
-    | None ->
-        bugf "annotation: add_field called outside scope of enter"
-    | Some flds -> cur_annot := Some ((key, value) :: flds)
-
 end
 
 type severity = Info | Error
@@ -115,14 +103,15 @@ type severity = Info | Error
 let system_message ?(severity=Info) fmt =
   Printf.ksprintf begin fun msg ->
     if !annotate then begin
-      Annot.enter "system_message" ;
-      Annot.add_field "severity" @@ `String (
+      let json, _ = Annot.fresh () in
+      Json.extend json "type" @@ `String "system_message" ;
+      Json.extend json "severity" @@ `String (
         match severity with
         | Info -> "info"
         | Error -> "error"
       ) ;
-      Annot.add_field "message" @@ `String msg ;
-      Annot.leave ()
+      Json.extend json "message" @@ `String msg ;
+      Annot.commit json
     end else begin
       match severity with
       | Info -> fprintf !out "%s\n%!" msg
@@ -583,6 +572,7 @@ type processing_state =
   | Process_proof of proof_processor
 
 and proof_processor = {
+  id : int ;
   thm : string ;
   compile : (unit -> unit) ;
   reset : (unit -> unit) ;
@@ -598,7 +588,7 @@ let rec process1 () =
   try begin match !current_state with
     | Process_top -> process_top1 ()
     | Process_proof proc -> begin
-        try process_proof1 proc.thm with
+        try process_proof1 proc with
         | Prover.End_proof reason -> begin
             if reason = `completed then proc.compile () ;
             system_message "Proof %s" begin
@@ -657,24 +647,25 @@ let rec process1 () =
       system_message ~severity:Error "Error: %s\n%!" msg ;
       interactive_or_exit ()
 
-and process_proof1 name =
-  let json = ref @@ Annot.fresh () in
+and process_proof1 proc =
+  let json, _ = Annot.fresh () in
   Json.extend json "type" @@ `String "proof_command" ;
   if not !suppress_proof_state_display then begin
     if !annotate then begin
-      Json.extend json "theorem" @@ `String name ;
+      Json.extend json "thm_id" @@ `Int proc.id ;
+      Json.extend json "theorem" @@ `String proc.thm ;
       Json.extend json "start_state" @@ Prover.state_json () ;
     end
     else if !interactive then Prover.display !out
   end ;
   suppress_proof_state_display := false ;
-  if !interactive && not !annotate then fprintf !out "%s < %!" name ;
+  if !interactive && not !annotate then fprintf !out "%s < %!" proc.thm ;
   let input, input_pos = Parser.command_start Lexer.token !lexbuf in
   let cmd_string = command_to_string input in
   if not (!interactive || !annotate) then fprintf !out "%s.\n%!" cmd_string ;
   if !annotate then Json.extend json "command" @@ `String cmd_string ;
   if !annotate && fst input_pos != Lexing.dummy_pos then
-    Json.extend json "provenance" @@ json_of_position input_pos ;
+    Json.extend json "range" @@ json_of_position input_pos ;
   let perform () =
     begin match input with
     | Induction(args, hn)           -> Prover.induction ?name:hn args
@@ -735,22 +726,22 @@ and process_proof1 name =
   match perform () with
   | () ->
       Json.extend json "end_state" @@ Prover.state_json () ;
-      Annot.one_shot !json
+      Annot.commit json
   | exception e ->
-      Annot.one_shot !json ;
+      Annot.commit json ;
       raise e
 
 and process_top1 () =
   if !interactive && not !annotate then fprintf !out "Abella < %!" ;
-  let json = ref @@ Annot.fresh () in
+  let json, top_id = Annot.fresh () in
   let input, input_pos = Parser.top_command_start Lexer.token !lexbuf in
   Json.extend json "type" @@ `String "top_command" ;
   if fst input_pos != Lexing.dummy_pos then
-    Json.extend json "provenance" @@ json_of_position input_pos ;
+    Json.extend json "range" @@ json_of_position input_pos ;
   let cmd_string = top_command_to_string input in
   if not (!interactive || !annotate) then fprintf !out "%s.\n%!" cmd_string ;
   Json.extend json "command" @@ `String cmd_string ;
-  Annot.one_shot !json ;
+  Annot.commit json ;
   begin match input with
   | Theorem(name, tys, thm) -> begin
       let st = get_bind_state () in
@@ -769,7 +760,7 @@ and process_top1 () =
         Prover.reset_prover st seq ()
       in
       current_state := Process_proof {
-          thm = name ;
+          id = top_id ; thm = name ;
           compile = thm_compile ;
           reset = thm_reset
         }
