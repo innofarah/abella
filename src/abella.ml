@@ -19,10 +19,11 @@
 (* along with Abella.  If not, see <http://www.gnu.org/licenses/>.          *)
 (****************************************************************************)
 
+open Abella_lib
 open Term
 open Metaterm
 open Checks
-open Abella_types
+open Types
 open Typing
 open Unifyty
 open Extensions
@@ -602,7 +603,7 @@ let rec process1 () =
           end
       end
   end with
-  | Abella_types.Reported_parse_error ->
+  | Types.Reported_parse_error ->
       State.Undo.undo () ;
       Lexing.flush_input !lexbuf ;
       interactive_or_exit ()

@@ -1,14 +1,4 @@
 (executable
   (name abella)
-  (libraries unix))
-
-(ocamllex
-  (modules lexer))
-
-; (ocamlyacc
-;   (modules parser))
-
-(menhir
-  (modules parser)
-  (infer true)
-  (flags --explain))
+  (libraries abella_lib)
+)

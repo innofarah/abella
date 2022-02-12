@@ -1,30 +1,30 @@
-/****************************************************************************/
-/* Copyright (C) 2007-2009 Gacek                                            */
-/* Copyright (C) 2013-2022 Inria (Institut National de Recherche            */
-/*                         en Informatique et en Automatique)               */
-/*                                                                          */
-/* This file is part of Abella.                                             */
-/*                                                                          */
-/* Abella is free software: you can redistribute it and/or modify           */
-/* it under the terms of the GNU General Public License as published by     */
-/* the Free Software Foundation, either version 3 of the License, or        */
-/* (at your option) any later version.                                      */
-/*                                                                          */
-/* Abella is distributed in the hope that it will be useful,                */
-/* but WITHOUT ANY WARRANTY; without even the implied warranty of           */
-/* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the            */
-/* GNU General Public License for more details.                             */
-/*                                                                          */
-/* You should have received a copy of the GNU General Public License        */
-/* along with Abella.  If not, see <http://www.gnu.org/licenses/>.          */
-/****************************************************************************/
+(****************************************************************************)
+(* Copyright (C) 2007-2009 Gacek                                            *)
+(* Copyright (C) 2013-2022 Inria (Institut National de Recherche            *)
+(*                         en Informatique et en Automatique)               *)
+(*                                                                          *)
+(* This file is part of Abella.                                             *)
+(*                                                                          *)
+(* Abella is free software: you can redistribute it and/or modify           *)
+(* it under the terms of the GNU General Public License as published by     *)
+(* the Free Software Foundation, either version 3 of the License, or        *)
+(* (at your option) any later version.                                      *)
+(*                                                                          *)
+(* Abella is distributed in the hope that it will be useful,                *)
+(* but WITHOUT ANY WARRANTY; without even the implied warranty of           *)
+(* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the            *)
+(* GNU General Public License for more details.                             *)
+(*                                                                          *)
+(* You should have received a copy of the GNU General Public License        *)
+(* along with Abella.  If not, see <http://www.gnu.org/licenses/>.          *)
+(****************************************************************************)
 
 %{
 
   open Extensions
   open Typing
 
-  open struct module Types = Abella_types end
+  open struct module Types = Types end
 
   let error_report ?(pos=Parsing.symbol_start_pos ()) fmt =
     let open Lexing in
@@ -38,7 +38,7 @@
           (pos.pos_cnum - pos.pos_bol + 1)
     in
     Format.kfprintf
-      (fun _ -> raise Abella_types.Reported_parse_error)
+      (fun _ -> raise Types.Reported_parse_error)
       Format.err_formatter parse_fmt pos_string
 
   let predefined ~pos id =
@@ -78,8 +78,8 @@
   let make_sig sigid sigpre sigdecls =
     let badconsts = ref [] in
     let collect_bad_decl = function
-      | Abella_types.SKind _ -> ()
-      | Abella_types.SType (ids, _) ->
+      | Types.SKind _ -> ()
+      | Types.SType (ids, _) ->
           List.iter begin fun k ->
             if is_illegal_constant k then
               badconsts := k :: !badconsts
@@ -87,7 +87,7 @@
     in
     List.iter collect_bad_decl sigdecls ;
     match List.rev !badconsts with
-    | [] -> Abella_types.Sig (sigid, sigpre, sigdecls)
+    | [] -> Types.Sig (sigid, sigpre, sigdecls)
     | (_k :: _) as ks ->
       let ks = String.concat ", " ks in
       error_report "Invalid signature constants: %s@\n\
@@ -116,7 +116,7 @@
 %token <string> STRINGID QSTRING CLAUSENAME
 %token EOF
 
-/* Lower */
+(* Lower *)
 
 %nonassoc COMMA
 %right RARROW
@@ -130,25 +130,25 @@
 
 %right CONS
 
-/* Higher */
+(* Higher *)
 
 
 %start lpmod lpsig
 %start top_command_start command_start any_command_start
 %start sig_decl mod_clause search_witness depth_spec
-/* %start term metaterm */
+(* %start term metaterm *)
 
 %type <Typing.uterm> term
 %type <Typing.umetaterm> metaterm
-%type <Abella_types.lpsig> lpsig
-%type <Abella_types.lpmod> lpmod
-%type <Abella_types.sig_decl> sig_decl
-%type <Abella_types.uclause> mod_clause
-%type <Abella_types.udef_clause list> defs
-%type <Abella_types.command * Typing.pos> command_start
-%type <Abella_types.top_command * Typing.pos> top_command_start
-%type <Abella_types.any_command * Typing.pos> any_command_start
-%type <Abella_types.witness> search_witness
+%type <Types.lpsig> lpsig
+%type <Types.lpmod> lpmod
+%type <Types.sig_decl> sig_decl
+%type <Types.uclause> mod_clause
+%type <Types.udef_clause list> defs
+%type <Types.command * Typing.pos> command_start
+%type <Types.top_command * Typing.pos> top_command_start
+%type <Types.any_command * Typing.pos> any_command_start
+%type <Types.witness> search_witness
 %type <(int * int option) list> depth_spec
 
 %%
@@ -186,7 +186,6 @@ id:
   | INST          { "inst" }
   | INTROS        { "intros" }
   | KEEP          { "keep" }
-  | KKIND         { "Kind" }
   | LEFT          { "left" }
   | MONOTONE      { "monotone" }
   | ON            { "on" }
@@ -203,21 +202,21 @@ id:
   | WITH          { "with" }
   | WITNESS       { "witness" }
 
-/* Kind */
+(* Kind *)
 knd:
   | TYPE
     {Term.kind 0}
   | TYPE; RARROW; k=knd
     {Term.kincr k}
 
-/* Annotated ID */
+(* Annotated ID *)
 aid:
   | x=loc_id
     { (x, Term.fresh_tyvar ()) }
   | x=loc_id; COLON; ty=ty
     { (x, ty) }
 
-/* Parenthesized annotated ID */
+(* Parenthesized annotated ID *)
 paid:
   | x=loc_id
     { (x, Term.fresh_tyvar ()) }

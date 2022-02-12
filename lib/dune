@@ -1,0 +1,10 @@
+(library
+  (name abella_lib)
+  (libraries unix))
+
+(ocamllex
+  (modules lexer))
+
+(menhir
+  (modules parser)
+  (flags --explain))

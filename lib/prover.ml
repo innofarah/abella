@@ -22,10 +22,9 @@
 open Term
 open Typing
 open Metaterm
-open Format
 open Tactics
 open Checks
-open Abella_types
+open Types
 open Extensions
 open Unifyty
 
@@ -382,12 +381,12 @@ let format_vars ff =
     end inst_vars
 
 let format_hyp fmt hyp =
-  fprintf fmt "%s : " hyp.id ;
+  Format.fprintf fmt "%s : " hyp.id ;
   begin match hyp.abbrev with
   | None -> format_metaterm fmt hyp.term
-  | Some s -> fprintf fmt "%s" s
+  | Some s -> Format.fprintf fmt "%s" s
   end;
-  pp_force_newline fmt ()
+  Format.pp_force_newline fmt ()
 
 let format_hyps fmt =
   let (am, hyps) = List.fold_left begin fun (am, hs) h ->
@@ -402,15 +401,15 @@ let format_hyps fmt =
     end (Itab.empty, []) sequent.hyps
   in
   Itab.iter begin fun ab hs ->
-    fprintf fmt "%s : %s@\n" (String.concat "," (List.rev hs)) ab
+    Format.fprintf fmt "%s : %s@\n" (String.concat "," (List.rev hs)) ab
   end am ;
   List.iter (format_hyp fmt) (List.rev hyps)
 
 let format_count_subgoals fmt n =
   match n with
   | 0 -> ()
-  | 1 -> fprintf fmt "1 other subgoal.@\n@\n"
-  | n -> fprintf fmt "%d other subgoals.@\n@\n" n
+  | 1 -> Format.fprintf fmt "1 other subgoal.@\n@\n"
+  | n -> Format.fprintf fmt "%d other subgoals.@\n@\n" n
 
 type subgoal_max = {
   smax_default : int ;
@@ -446,7 +445,7 @@ let format_other_subgoals fmt =
     (* Printf.printf "Showing %d goals at depth %d\n%!" max_goals goal_depth ; *)
     if max_goals > 0 then begin
       smax_map := IntMap.add goal_depth (max_goals - 1) !smax_map ;
-      fprintf fmt "@[<1>Subgoal %s%sis:@\n%a@]@\n@\n"
+      Format.fprintf fmt "@[<1>Subgoal %s%sis:@\n%a@]@\n@\n"
         sequent.name
         (if sequent.name = "" then "" else " ")
         format_metaterm (normalize sequent.goal)
@@ -456,31 +455,31 @@ let format_other_subgoals fmt =
   State.reload pristine
 
 let format_sequent fmt =
-  pp_open_vbox fmt 0 ; begin
+  Format.pp_open_vbox fmt 0 ; begin
     format_vars fmt ;
     format_hyps fmt ;
-    fprintf fmt "============================@\n " ;
+    Format.fprintf fmt "============================@\n " ;
     format_metaterm fmt sequent.goal
-  end ; pp_close_box fmt ()
+  end ; Format.pp_close_box fmt ()
 
 let format_display fmt =
-  pp_open_box fmt 0 ;
+  Format.pp_open_box fmt 0 ;
   if sequent.name = "" then
-    fprintf fmt "@\n"
+    Format.fprintf fmt "@\n"
   else
-    fprintf fmt "Subgoal %s:@\n@\n" sequent.name;
+    Format.fprintf fmt "Subgoal %s:@\n@\n" sequent.name;
   format_sequent fmt ;
-  fprintf fmt "@\n@\n" ;
+  Format.fprintf fmt "@\n@\n" ;
   format_other_subgoals fmt ;
-  pp_close_box fmt () ;
-  pp_print_flush fmt ()
+  Format.pp_close_box fmt () ;
+  Format.pp_print_flush fmt ()
 
 let display out =
-  format_display (formatter_of_out_channel out)
+  format_display (Format.formatter_of_out_channel out)
 
 let get_display () =
   let b = Buffer.create 100 in
-  format_display (formatter_of_buffer b) ;
+  format_display (Format.formatter_of_buffer b) ;
   Buffer.contents b
 
 let state_json () : Json.t =
