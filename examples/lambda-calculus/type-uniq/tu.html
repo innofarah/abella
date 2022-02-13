@@ -13,10 +13,13 @@
 </head>
 
 <body>
-  <div id="container" class="absolute inset-0">
-    <div id="thmbox"
-      class="font-mono bg-yellow-200 leading-tight w-full h-full px-5 whitespace-pre overflow-auto text-green-800">
-      &nbsp;
+  <h1>Testing</h1>
+  <div class="w-11/12 mx-auto mt-2 border-rose-300 border-2">
+    <div id="container">
+      <div id="thmbox"
+        class="font-mono bg-yellow-200 leading-tight w-full h-full px-2 whitespace-pre overflow-auto text-green-800">
+        &nbsp;
+      </div>
     </div>
   </div>
 
@@ -64,7 +67,8 @@
             last_pos = start;
           }
           const ul = elm.type === "proof_command" ? "text-rose-700 text-sm" : "leading-snug text-slate-800";
-          const cmd = $(`<div class="abella-command inline-block ${ul} cursor-default hover:shadow-md hover:shadow-rose-800/40 hover:bg-white">${thm_text.slice(start, stop)}</div>`);
+          // const cmd = $(`<div class="abella-command inline-block ${ul} cursor-default hover:shadow-md hover:shadow-rose-800/40 hover:bg-white">${thm_text.slice(start, stop)}</div>`);
+          const cmd = $(`<div class="abella-command inline-block ${ul} cursor-default hover:bg-rose-200/60">${thm_text.slice(start, stop)}</div>`);
           $(cmd).data('obj', elm);
           cmd_map.set(elm.id, cmd);
           $(chunk_div).append(cmd);
@@ -100,20 +104,6 @@
         $(thm_cmd).after('<span>\n</span>');
         $(btn).click();
       });
-      // $(thm_box).children().each((idx, cmd) => {
-      //   const obj = $(cmd).data('obj');
-      //   if (obj && obj.type && obj.type == 'proof_command' && !obj.moved) {
-      //     const parent_cmd = cmd_map.get(obj.thm_id);
-      //     // starting from here, move all spans and divs out.
-      //     let nxt = $(parent_cmd).next();
-      //     while (true) {
-      //       if (!nxt.length || !($(nxt).hasClass('abella-command') || $(nxt).is('span')))
-      //         break;
-      //       console.log(obj.thm_id, $(nxt).html());
-      //       nxt = $(nxt).next();
-      //     }
-      //   }
-      // });
       cmd_map.forEach((cmd, id) => {
         const obj = $(cmd).data('obj');
         let descr = "<div class=\"whitespace-pre font-mono text-sm overflow-auto\">";
@@ -126,7 +116,7 @@
             descr += `\n\n${seqToStr(obj.end_state)}`;
         }
         descr += "</div>";
-        flobj = $(`<div id="info-${id}" class="border-2 border-rose-800 bg-white p-2 shadow-lg shadow-rose-600/40">`);
+        let flobj = $(`<div class="border-2 border-rose-800 bg-white p-2 shadow-lg shadow-rose-600/40">`);
         $(flobj).css({
           'position': 'absolute',
           'z-index': '10100',
@@ -134,20 +124,24 @@
         });
         $(flobj).html(descr);
         $('#container').append(flobj);
-      });
-      cmd_map.forEach((cmd, id) => {
-        const flid = '#info-' + id;
+        // setup the actions
         $(cmd).on("mousemove", function (ev) {
-          $(flid).css({
-            'display': 'block',
-            'top': ev.pageY + 10,
-            'left': ev.pageX + 10
-          });
+          const fl_width = $(flobj).outerWidth(true), fl_height = $(flobj).outerHeight(true);
+          const w_width = $(window).width(), w_height = $(window).height();
+          const p_x = ev.pageX, p_y = ev.pageY;
+          const d = 10;
+          const css = {display: 'block'};
+          if (p_x + fl_width + d <= w_width) css.left = p_x + d;
+          else css.left = w_width - fl_width;
+          if (p_y + fl_height + d <= w_height) css.top = p_y + d;
+          else if (p_y - fl_height - d >= 0) css.top = p_y - fl_height - d;
+          else css.display = 'none'; // float doesn't fit above or below
+          $(flobj).css(css);
         }).on("mouseleave", function () {
-          $(flid).css({ 'display': 'none' });
+          $(flobj).css({ 'display': 'none' });
         }).on("click", function () {
-          $(flid).css({ 'display': 'none' });
-          Fancybox.show([{ src: $(flid).html(), type: "html" }]);
+          $(flobj).css({ 'display': 'none' });
+          Fancybox.show([{ src: $(flobj).html(), type: "html" }]);
         });
       });
     }
