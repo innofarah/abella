@@ -81,22 +81,38 @@ let json_of_position (lft, rgt) =
     ]
 
 module Annot : sig
-  val fresh : unit -> Json.t ref * int
-  val commit : Json.t ref -> unit
+  type t
+  val fresh : unit -> t
+  val id : t -> int
+  val extend : t -> string -> Json.t -> unit
+  val commit : t -> unit
+  val last_commit_id : unit -> int option
 end = struct
-  let last_id = ref 0
+  type t = {
+    id : int ;
+    mutable fields : (string * Json.t) list ;
+  }
+  let id annot = annot.id
+  let last_id = ref @@ -1
   let is_first = ref true
   let fresh () =
-    let id = !last_id in
-    let json = ref @@ `Assoc [ "id", `Int id ] in
     incr last_id ;
-    (json, id)
-  let commit json =
+    { id = !last_id ; fields = [] }
+  let extend annot key value =
+    annot.fields <- (key, value) :: annot.fields
+  let last_commit = ref None
+  let commit annot =
     if !annotate then begin
       if not !is_first then fprintf !out ",\n" ;
       is_first := false ;
-      fprintf !out "%s%!" (Json.to_string !json) ;
+      let json = `Assoc (("id", `Int annot.id) :: annot.fields) in
+      fprintf !out "%s%!" (Json.to_string json) ;
+      last_commit := Some annot
     end
+  let last_commit_id () =
+    match !last_commit with
+    | None -> None
+    | Some {id ; _} -> Some id
 end
 
 type severity = Info | Error
@@ -104,14 +120,19 @@ type severity = Info | Error
 let system_message ?(severity=Info) fmt =
   Printf.ksprintf begin fun msg ->
     if !annotate then begin
-      let json, _ = Annot.fresh () in
-      Json.extend json "type" @@ `String "system_message" ;
-      Json.extend json "severity" @@ `String (
+      let json = Annot.fresh () in
+      Annot.extend json "type" @@ `String "system_message" ;
+      Annot.extend json "after" @@ begin
+        match Annot.last_commit_id () with
+        | None -> `Null
+        | Some id -> `Int id
+      end ;
+      Annot.extend json "severity" @@ `String (
         match severity with
         | Info -> "info"
         | Error -> "error"
       ) ;
-      Json.extend json "message" @@ `String msg ;
+      Annot.extend json "message" @@ `String msg ;
       Annot.commit json
     end else begin
       match severity with
@@ -649,13 +670,13 @@ let rec process1 () =
       interactive_or_exit ()
 
 and process_proof1 proc =
-  let json, _ = Annot.fresh () in
-  Json.extend json "type" @@ `String "proof_command" ;
+  let annot = Annot.fresh () in
+  Annot.extend annot "type" @@ `String "proof_command" ;
   if not !suppress_proof_state_display then begin
     if !annotate then begin
-      Json.extend json "thm_id" @@ `Int proc.id ;
-      Json.extend json "theorem" @@ `String proc.thm ;
-      Json.extend json "start_state" @@ Prover.state_json () ;
+      Annot.extend annot "thm_id" @@ `Int proc.id ;
+      Annot.extend annot "theorem" @@ `String proc.thm ;
+      Annot.extend annot "start_state" @@ Prover.state_json () ;
     end
     else if !interactive then Prover.display !out
   end ;
@@ -664,9 +685,9 @@ and process_proof1 proc =
   let input, input_pos = Parser.command_start Lexer.token !lexbuf in
   let cmd_string = command_to_string input in
   if not (!interactive || !annotate) then fprintf !out "%s.\n%!" cmd_string ;
-  if !annotate then Json.extend json "command" @@ `String cmd_string ;
+  if !annotate then Annot.extend annot "command" @@ `String cmd_string ;
   if !annotate && fst input_pos != Lexing.dummy_pos then
-    Json.extend json "range" @@ json_of_position input_pos ;
+    Annot.extend annot "range" @@ json_of_position input_pos ;
   let perform () =
     begin match input with
     | Induction(args, hn)           -> Prover.induction ?name:hn args
@@ -726,23 +747,23 @@ and process_proof1 proc =
   if not !annotate then perform () else
   match perform () with
   | () ->
-      Json.extend json "end_state" @@ Prover.state_json () ;
-      Annot.commit json
+      Annot.extend annot "end_state" @@ Prover.state_json () ;
+      Annot.commit annot
   | exception e ->
-      Annot.commit json ;
+      Annot.commit annot ;
       raise e
 
 and process_top1 () =
   if !interactive && not !annotate then fprintf !out "Abella < %!" ;
-  let json, top_id = Annot.fresh () in
+  let annot = Annot.fresh () in
   let input, input_pos = Parser.top_command_start Lexer.token !lexbuf in
-  Json.extend json "type" @@ `String "top_command" ;
+  Annot.extend annot "type" @@ `String "top_command" ;
   if fst input_pos != Lexing.dummy_pos then
-    Json.extend json "range" @@ json_of_position input_pos ;
+    Annot.extend annot "range" @@ json_of_position input_pos ;
   let cmd_string = top_command_to_string input in
   if not (!interactive || !annotate) then fprintf !out "%s.\n%!" cmd_string ;
-  Json.extend json "command" @@ `String cmd_string ;
-  Annot.commit json ;
+  Annot.extend annot "command" @@ `String cmd_string ;
+  Annot.commit annot ;
   begin match input with
   | Theorem(name, tys, thm) -> begin
       let st = get_bind_state () in
@@ -761,7 +782,7 @@ and process_top1 () =
         Prover.reset_prover st seq ()
       in
       current_state := Process_proof {
-          id = top_id ; thm = name ;
+          id = Annot.id annot ; thm = name ;
           compile = thm_compile ;
           reset = thm_reset
         }

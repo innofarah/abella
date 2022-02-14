@@ -453,10 +453,4 @@ module Json = struct
   let to_channel oc x =
     let out = Format.formatter_of_out_channel oc in
     Format.fprintf out "%a@?" format x
-
-  let extend json k v =
-    match !json with
-    | `Assoc kvs -> json := `Assoc ((k, v) :: kvs)
-    | _ -> bugf "Json.extend: not an association: %s" (to_string !json)
-
 end
