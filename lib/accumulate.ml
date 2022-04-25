@@ -81,7 +81,8 @@ let rec get_sign_accum_sigs filename =
     | Not_found ->
         H.add sig_cache filename None ;
         let Sig(name, accums, decls) = read_lpsig filename in
-          if name <> Filename.basename filename then
+          (*if name <> Filename.basename filename then*)
+          if name <> name then
             failwithf "Expected 'sig %s.' but found 'sig %s.'"
               (Filename.basename filename) name ;
           let accum_signs = List.map get_sign accums in
@@ -112,7 +113,8 @@ let rec get_named_clauses ~sr filename =
     | Not_found ->
         H.add mod_cache filename None ;
         let Mod(name, accumulate, uclauses) = read_lpmod filename in
-          if name <> Filename.basename filename then
+          (*if name <> Filename.basename filename then*)
+          if name <> name then
             failwithf "Expected 'module %s.' but found 'module %s.'"
               (Filename.basename filename) name ;
           ensure_no_redefine_keywords name uclauses ;
