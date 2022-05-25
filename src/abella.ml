@@ -808,24 +808,21 @@ and process_top1 () =
   | Import(filename, withs) ->
       let parts = String.split_on_char ':' filename in
       let len_of_list = List.length parts in
-      if len_of_list = 1 then ( (* no protocol - simple file name *)
+      if len_of_list = 1 then ( (* no flag - simple file name *)
         compile (CImport (filename, withs)) ;
         import (normalize_filename filename) withs;
       )
       else (
         match parts with
         | [] -> Printf.printf "empty"
-        | protocol::path::_ ->
-            if protocol = "ipfs" then (
-              (* Printf.printf "the protocol is %s path is %s\n" protocol path *)
+        | flag::path::_ ->
+            if flag = "cid" then (
               (* assuming that we only deal with importing a direct 'cid' from ipfs -- without a long path of directories*)
-              let p = String.sub path 2 (String.length path - 2) in
-              Printf.printf "(* %s *)\n%!" p ;
-              compile (CImport (p, withs)) ;
-              import (normalize_filename p) withs;
+              compile (CImport (path, withs)) ;
+              import (normalize_filename path) withs;
             )
             else (
-              failwith "unknown protocol"
+              failwith "unknown flag"
             )
         | _ -> ()
     )
@@ -833,24 +830,21 @@ and process_top1 () =
       if !can_read_specification then begin
         let parts = String.split_on_char ':' filename in
         let len_of_list = List.length parts in
-        if len_of_list = 1 then ( (* no protocol - simple file name *)
+        if len_of_list = 1 then ( (* no flag - simple file name *)
           read_specification (normalize_filename filename) ;
           ensure_finalized_specification ()
         )
         else (
           match parts with
           | [] -> Printf.printf "empty"
-          | protocol::path::_ ->
-              if protocol = "ipfs" then (
-                (* Printf.printf "the protocol is %s path is %s\n" protocol path *)
+          | flag::path::_ ->
+              if flag = "cid" then (
                 (* assuming that we only deal with importing a direct 'cid' from ipfs -- without a long path of directories*)
-                let p = String.sub path 2 (String.length path - 2) in
-                Printf.printf "(* %s *)\n%!" p ;
-                read_specification (normalize_filename p) ;
+                read_specification (normalize_filename path) ;
                 ensure_finalized_specification ()
               )
               else (
-                failwith "unknown protocol"
+                failwith "unknown flag"
               )
           | _ -> ()
         )
