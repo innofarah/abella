@@ -243,7 +243,7 @@ let ensure_finalized_specification () =
   end
 
 let compile citem =
-  ensure_finalized_specification () ;
+  (* ensure_finalized_specification () ; *)
   comp_content := citem :: !comp_content
 
 let predicates (_ktable, ctable) =
