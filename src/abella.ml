@@ -1036,7 +1036,7 @@ let damf_export_theorem name =
             "format", `String "annotated-production" ;
             "annotation", `List [`String name] ;
             "production", `Assoc [
-              "mode", `String ("damf:" ^ Damf.tool_cid) ;
+              "mode", `String ("damf:" ^ Damf.kernel_mode_cid) ;
               "sequent", `Assoc [
                 "conclusion", `String name ;
                 "dependencies", `List lemmas ;

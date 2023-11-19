@@ -51,19 +51,34 @@ let () =
   Arg.parse options (fun _ -> failwith "bad arguments") usage_message ;
   if !output_file = "" then
     failwith "Needs an output file" ;
-  let tool_json : Json.t = `Assoc [
+  let kernel_mode_json : Json.t = `Assoc [
       "name", `String "Abella" ;
       "version", `String version ;
       "tag", `String ("Abella " ^ version) ;
+      "part", `String "kernel";
     ] in
   let cid =
-    run_command "ipfs dag put" (fun oc -> Json.to_channel oc tool_json) |>
+    run_command "ipfs dag put" (fun oc -> Json.to_channel oc kernel_mode_json) |>
     String.trim in
-  let tool_json : Json.t = `Assoc [
+  let kernel_mode_json : Json.t = `Assoc [
       "format", `String "tool" ;
       "content", `Assoc [ "/", `String cid ]
     ] in
-  let tool_cid = String.trim @@ run_command "ipfs dag put" (fun oc -> Json.to_channel oc tool_json) in
+  let kernel_mode_cid = String.trim @@ run_command "ipfs dag put" (fun oc -> Json.to_channel oc kernel_mode_json) in 
+  let import_with_mode_json : Json.t = `Assoc [
+      "name", `String "Abella" ;
+      "version", `String version ;
+      "tag", `String ("Abella " ^ version) ;
+      "part", `String "Import with";
+    ] in
+  let cid =
+    run_command "ipfs dag put" (fun oc -> Json.to_channel oc import_with_mode_json) |>
+    String.trim in
+  let import_with_mode_json : Json.t = `Assoc [
+      "format", `String "tool" ;
+      "content", `Assoc [ "/", `String cid ]
+    ] in
+  let import_with_mode_cid = String.trim @@ run_command "ipfs dag put" (fun oc -> Json.to_channel oc import_with_mode_json) in
   let lang_json : Json.t = `Assoc [
       "name", `String "Abella" ;
       "version", `String version ;
@@ -81,5 +96,6 @@ let () =
   Printf.fprintf oc "(* This file is generated. Do not edit! *)\n" ;
   Printf.fprintf oc "(* dune exec ../gen/damf_cids.ml -- -o damf_cids.ml *)\n" ;
   Printf.fprintf oc "let language_cid = \"%s\";;\n" lang_cid ;
-  Printf.fprintf oc "let tool_cid = \"%s\";;\n" tool_cid ;
+  Printf.fprintf oc "let kernel_mode_cid = \"%s\";;\n" kernel_mode_cid ;
+  Printf.fprintf oc "let import_with_mode_cid = \"%s\";;\n" import_with_mode_cid ;
   close_out oc
