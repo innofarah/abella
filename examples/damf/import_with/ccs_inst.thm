@@ -1,0 +1,38 @@
+Import "ccs_sig".
+
+%%% The reflexivity "technique"
+
+Define refl_t : proc -> proc -> proc -> proc -> prop by
+  refl_t P P Q Q.
+
+Theorem refl_t_sym : forall P1 P2 Q1 Q2, refl_t P1 P2 Q1 Q2 -> refl_t Q1 Q2 P1 P2.
+intros. case H1. search.
+
+Import "ccs_core" with tech := refl_t.
+
+CoDefine bisim : proc -> proc -> prop
+by
+  bisim P Q :=
+     (forall A P1, one P A P1 ->
+        exists Q1, one Q A Q1 /\ bisim P1 Q1)
+  /\ (forall A Q1, one Q A Q1 ->
+        exists P1, one P A P1 /\ bisim P1 Q1).
+
+Theorem refl_sound : forall P Q, bisim_up_to P Q -> bisim P Q.
+coinduction. intros. case H1. unfold.
+  intros. apply *H2 to H4. case H6. apply CH to *H7. search.
+  intros. apply *H3 to H4. case H6. apply CH to *H7. search.
+
+Theorem refl_complete : forall P Q, bisim P Q -> bisim_up_to P Q.
+coinduction. intros. case H1. unfold.
+  intros. apply H2 to *H4. witness Q2. split. search.
+   witness P1. witness Q2. split. search. backchain CH.
+  intros. apply H3 to *H4. witness P2. split. search.
+   witness P2. witness Q1. split. search. backchain CH.
+
+Theorem bisim_sym : forall P Q, bisim P Q -> bisim Q P.
+intros.
+apply refl_complete to *H1.
+Hsym : apply bisim_up_to_sym to refl_t_sym.  %% reference to translated thm
+apply *Hsym to H2.
+backchain refl_sound.

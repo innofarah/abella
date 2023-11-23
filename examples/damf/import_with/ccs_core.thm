@@ -1,0 +1,50 @@
+%%% Bisimilarity-up-to for CCS
+%%%
+%%% For more details, please see the paper:
+%%%
+%%%   "A lightweight formalization of the meta-theory of
+%%%   bisimulation-up-to" by K. Chaudhuri, M. Cimini, and
+%%%   D. Miller, 2014
+
+Import "ccs_sig".
+
+%%% The steps of the labelled transition system for CCS
+
+Define one : proc -> action -> proc -> prop by
+  one (act A P) A P
+; one (plus P1 P2) A Q             := one P1 A Q
+; one (plus P1 P2) A Q             := one P2 A Q
+; one (par P Q) A (par P1 Q)       := one P A P1
+; one (par P Q) A (par P Q1)       := one Q A Q1
+; one (repl P) A (par (repl P) Q)  := one P A Q
+; one (par P Q) tau (par P1 Q1)    :=
+    exists X, one P (up X) P1 /\ one Q (dn X) Q1
+; one (par P Q) tau (par P1 Q1)    :=
+    exists X, one P (dn X) P1 /\ one Q (up X) Q1
+; one (repl P) tau (par (repl P) (par Q R)) :=
+    exists X, one P (up X) Q /\ one P (dn X) R.
+
+%%% The bisimulation-up-to relation.
+
+Type tech proc -> proc -> proc -> proc -> prop.
+
+CoDefine bisim_up_to : proc -> proc -> prop
+by
+  bisim_up_to P Q :=
+     (forall A P1, one P A P1 ->
+        exists Q1, one Q A Q1 /\
+          exists P2 Q2, tech P1 P2 Q1 Q2 /\ bisim_up_to P2 Q2)
+  /\ (forall A Q1, one Q A Q1 ->
+        exists P1, one P A P1 /\
+          exists P2 Q2, tech P1 P2 Q1 Q2 /\ bisim_up_to P2 Q2).
+
+%%% Proof the bisimulation-up-to relation is symmetric
+
+Theorem bisim_up_to_sym :
+  (forall P1 P2 Q1 Q2, tech P1 P2 Q1 Q2 -> tech Q1 Q2 P1 P2) ->
+  forall P Q, bisim_up_to P Q -> bisim_up_to Q P.
+intros Hsym H.
+clear -> H. clear -> Q. clear -> P.
+coinduction. intros. case H1. unfold.
+  intros. apply *H3 to H4. apply Hsym to *H6. apply CH to *H7. search.
+  intros. apply *H2 to H4. apply Hsym to *H6. apply CH to *H7. search.
