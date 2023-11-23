@@ -248,6 +248,93 @@ module Damf = struct
 
   let exports : (id * Json.t) list ref = ref []
   let add_export id payload = exports := (id, payload) :: !exports
+
+  let generate_import_with_adapters () = 
+    (*look in thm_map, if we find generic, then we should generate an adapter (from it) *)
+    if !exporting then begin
+    let open Json in
+    Hashtbl.iter (fun id thm_id ->
+      match thm_id with
+      | Local json -> 
+          if String.starts_with "!generic!" id then begin
+          Printf.printf "%s\n" (Json.to_string json);
+          Printf.printf "the id is %s\n" id;
+          let splitted = String.split_on_char '!' id in
+          match splitted with 
+          | _::_::inst_thm_name::decl::defn_name::_ ->
+            Printf.printf "inst_thm_name: %s ; decl_name : %s ; defn_name : %s\n" inst_thm_name decl defn_name;
+            let json : Json.t =
+              `Assoc [
+                "format", `String "assertion" ;
+                "agent", `String !agent ;
+                "claim", `Assoc [
+                  "format", `String "annotated-production" ;
+                  "annotation", `Assoc [("declaration", `String decl); ("predicate", `String defn_name); ("theorem", `String inst_thm_name)] ;
+                  "production", `Assoc [
+                    "mode", `String ("damf:" ^ import_with_mode_cid) ;
+                    "sequent", `Assoc [
+                      "conclusion", `String inst_thm_name ;
+                      "dependencies", `List [ `String id ] ;
+                    ] ;
+                  ] ;
+                ] ;
+              ] in
+            add_export (inst_thm_name ^ "!" ^ "adapted") json
+          | _ -> ();
+          end
+      | _ -> ()) thm_map  
+      end 
+
+  let generate_generic_sigmas () = 
+    if !exporting then begin
+    let open Json in
+    Hashtbl.iter (fun id thm_id ->
+      match thm_id with
+      | Local json -> 
+          if String.starts_with "!generic!" id then begin
+          let splitted = String.split_on_char '!' id in
+          match splitted with 
+          | _::_::inst_thm_name::decl::defn_name::_ ->
+            Hashtbl.iter (fun sigma_id sigma ->
+              if String.equal sigma_id (inst_thm_name ^ "!sigma") then 
+              begin
+                let sigma_tmp = ref [] in
+                let cxt_name = "!generic!" ^ sigma_id in
+                let inst_content = sigma |> Util.to_list in
+                List.iter (fun txt ->
+                  let txt = Util.to_string txt in
+                  let lb = Lexing.from_string (txt ^ ".") in
+                  let cmd, _ = Parser.top_command_start Lexer.token lb in
+                  match cmd with
+                  | Define (flav, idtys, cls) ->
+                      if String.starts_with (defn_name ^ " :") (idtys_to_string idtys) then begin
+                        let splitted = String.split_on_char ':' (idtys_to_string idtys) in
+                        match splitted with 
+                        | _::typesig::_ -> 
+                          let replacement = "Type " ^ decl ^ (typesig) in 
+                          sigma_tmp := !sigma_tmp @ [replacement];
+                        | _ -> ();
+                        end
+                      else begin
+                         (*Here, we need to replace any occurrence of defn_name (ex: refl_t) token by decl (ex: tech) *)
+                         
+                         (*!! TEMPORARY SOLUTION*)
+                         let open Str in
+                         let replacement = Str.global_replace (Str.regexp_string defn_name) decl txt in sigma_tmp := !sigma_tmp @ [replacement]
+                       
+                        end 
+                  | _ -> sigma_tmp := !sigma_tmp @ [txt]) inst_content;
+                  (*Here because we know that we are parsing a correct sigma; generated in same session; wouldn't be here if that sigma had an illegal element;; would have failed earlier ;; so we just directly add elements that don't match Define *)
+  
+                  let sigma_new = `List ( List.map (fun x -> `String x) !sigma_tmp ) in
+                   register_sigma cxt_name sigma_new;
+
+              end) sigma_map; (*generate a generic sigma for each sigma of each theorem*)              
+          | _ -> ();
+          end
+      | _ -> ()) thm_map
+      end
+      
   let write_export_file () =
     if !exporting then begin
       debugf "input_file = %S" !input_file ;
@@ -545,7 +632,7 @@ let ensure_finalized_specification () =
     comp_spec_clauses := !Prover.clauses
   end
 
-let damf_register citem =
+let damf_register citem generic decl defn_name =
   match citem with
   | CKind (ids, knd) ->
       List.iter (fun id -> Damf.add_type id knd) ids
@@ -557,8 +644,8 @@ let damf_register citem =
       Damf.reset_marks () ;
       Damf.mark_metaterm Iset.empty form ;
       let sigma = Damf.sigma () in
-      let context = name ^ "!sigma" in
-      Damf.register_sigma context sigma ;
+      let context = (if generic then "!generic!" else "") ^ name ^ "!sigma" in
+      if not generic then Damf.register_sigma context sigma ; (*we will register the generic sigma later in generate_generic_sigmas()*)
       let form = Format.asprintf "%s: %a"
           (match tyvars with
            | [] -> ""
@@ -569,13 +656,13 @@ let damf_register citem =
           "content", `String form ;
           "context", `List [`String context] ;
         ] in
-      Damf.(register_thm name @@ Local thm_id)
+      Damf.(register_thm (if generic then "!generic!" ^ name ^ "!" ^ decl ^ "!" ^ defn_name else name) @@ Local thm_id)
   | _ -> ()
 
 let compile citem =
   (* ensure_finalized_specification () ; *)
   comp_content := citem :: !comp_content ;
-  damf_register citem
+  damf_register citem false "" ""
 
 let predicates (_ktable, ctable) =
   ctable |>
@@ -707,6 +794,7 @@ let replace_atom_compiled decl defn_name defn comp=
   match comp with
   | CTheorem (nm, tyvars, bod, fin) ->
       (* Printf.printf "Trying to rewrite a CTheorem\n%!" ; *)
+      damf_register (CTheorem(nm, tyvars, bod, fin)) true decl defn_name;
       CTheorem (nm, tyvars, replace_atom_metaterm decl defn_name defn bod, fin)
   | CDefine (flav, tyvars, definiens, clauses) ->
       if List.mem_assoc defn_name definiens then
@@ -770,7 +858,7 @@ let import pos filename withs =
         match decls with
         | [] -> ()
         | decl :: decls -> begin
-            damf_register decl ;
+            damf_register decl false "" "";
             match decl with
             | CTheorem(name, tys, thm, _) ->
                 (* compile (CTheorem (name, tys, thm, Finished)) ; *)
@@ -864,19 +952,19 @@ let damf_import =
               remark :=
                 if fresh_ids = [] then " (* merged *)"
                 else Printf.sprintf " (* fresh: %s *)" (String.concat ", " fresh_ids) ;
-              damf_register (CKind (ids, knd)) ;
+              damf_register (CKind (ids, knd)) false "" "";
               debug_spec_sign ~msg:"Kind" ()
           | Type (ids, ty) ->
               let fresh_ids = Prover.add_global_consts (List.map (fun id -> (id, ty)) ids) in
               remark :=
                 if fresh_ids = [] then " (* merged *)"
                 else Printf.sprintf " (* fresh: %s *)" (String.concat ", " fresh_ids) ;
-              damf_register (CType (ids, ty)) ;
+              damf_register (CType (ids, ty)) false "" "";
               debug_spec_sign ~msg:"Type" ()
           | Define (flav, tyargs, udefs) -> begin
               match Prover.register_definition flav tyargs udefs with
               | None -> remark := " (* merged *)"
-              | Some comp -> damf_register comp
+              | Some comp -> damf_register comp false "" ""
             end
           | _ ->
               failwithf "Illegal element in Sigma: %s" txt
@@ -905,7 +993,7 @@ let damf_import =
           check_theorem tys thm ;
           (* Prover.theorem thm ; *)
           add_lemma name tys thm ;
-          damf_register (CTheorem (name, tys, thm, Finished)) ;
+          damf_register (CTheorem (name, tys, thm, Finished)) false "" "";
           Damf.(register_thm name (Global cid)) ;
           debugf "%s." (top_command_to_string cmd)
         end
@@ -1228,6 +1316,8 @@ let rec process1 () =
       interactive_or_exit ()
   | End_of_file ->
       write_compilation () ;
+      Damf.generate_generic_sigmas();
+      Damf.generate_import_with_adapters();
       Damf.write_export_file () ;
       Damf.do_publish () ;
       if !switch_to_interactive then begin
